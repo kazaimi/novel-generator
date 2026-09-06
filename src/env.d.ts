@@ -1,0 +1,16 @@
+import type { ApiExpose } from '@shared/types'
+
+declare global {
+  interface Window {
+    api: ApiExpose
+  }
+}
+
+// 让 TS 识别 .vue 单文件组件
+declare module '*.vue' {
+  import type { DefineComponent } from 'vue'
+  const component: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>
+  export default component
+}
+
+export {}
