@@ -2,6 +2,7 @@
   "name": "novel-generator",
   "version": "0.1.0",
   "description": "AI 驱动的互动叙事小说生成器游戏",
+  "license": "MIT",
   "main": "./out/main/index.js",
   "author": "novel-generator",
   "scripts": {
