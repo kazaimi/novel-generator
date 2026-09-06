@@ -1,4 +1,72 @@
 /**
+ * 增量提取：从「尚未生成完毕」的 JSON 文本中提取 narrative 字段的当前值。
+ *
+ * 用于流式显示——模型边生成边调用，每次返回 narrative 目前已写出的部分。
+ * 实现要点：
+ *  - 兼容 {"answer":{"narrative":...}} 等包裹（找第一个 narrative 键即可）
+ *  - 正确处理转义（\" \\ \n \uXXXX），残缺的 \u 转义截断丢弃
+ *  - 字符串未闭合时返回目前已写出的部分（流式尾部）
+ */
+export function extractNarrativeSoFar(buffer: string): string {
+  if (!buffer) return ''
+  // 找到 narrative 键（允许任意缩进/换行），定位其值的起始引号
+  const keyMatch = /"narrative"\s*:\s*"/.exec(buffer)
+  if (!keyMatch) return ''
+  const start = keyMatch.index + keyMatch[0].length
+
+  let out = ''
+  let i = start
+  while (i < buffer.length) {
+    const ch = buffer[i]
+    if (ch === '"') {
+      // 未转义的闭合引号 → narrative 完整结束
+      break
+    }
+    if (ch === '\\') {
+      const next = buffer[i + 1]
+      if (next === undefined) break // 流式尾部残缺转义
+      switch (next) {
+        case '"':
+          out += '"'
+          break
+        case '\\':
+          out += '\\'
+          break
+        case '/':
+          out += '/'
+          break
+        case 'n':
+          out += '\n'
+          break
+        case 't':
+          out += '\t'
+          break
+        case 'r':
+          break
+        case 'u': {
+          const hex = buffer.slice(i + 2, i + 6)
+          if (hex.length < 4 || !/^[0-9a-fA-F]+$/.test(hex)) {
+            // \u 转义不完整（流式尾部）——丢弃并结束
+            return out
+          }
+          out += String.fromCharCode(parseInt(hex, 16))
+          i += 4 // 循环末尾 +1，共跳过 \uXXXX
+          break
+        }
+        default:
+          // 未知转义，原样保留
+          out += next
+      }
+      i += 2
+      continue
+    }
+    out += ch
+    i += 1
+  }
+  return out
+}
+
+/**
  * JSON 三层降级解析器。
  *
  * 免费模型的输出不一定能严格符合 JSON 格式，需要多重容错：

@@ -108,6 +108,8 @@ export interface PlayerProfile {
   genrePreference: string
   /** 自由描述（一句话画像） */
   summary: string
+  /** 游玩过程中 AI 观察到的行为倾向积累（profileDelta 累积，供叙事逐步贴合玩家） */
+  evolvingNotes: string[]
 }
 
 /* ============ Director 章节蓝图 ============ */
@@ -228,7 +230,14 @@ export interface StreamStatus {
   message: string
 }
 
-export type StreamEvent = StreamToken | StreamDone | StreamStatus
+/** narrative 增量事件：携带从残缺 JSON 中实时提取出的正文（累计全文） */
+export interface StreamNarrative {
+  type: 'narrative'
+  /** narrative 当前已生成的完整文本 */
+  text: string
+}
+
+export type StreamEvent = StreamToken | StreamDone | StreamStatus | StreamNarrative
 
 /* ============ IPC 接口契约 ============ */
 

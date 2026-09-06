@@ -3,7 +3,7 @@ import { writeFile } from 'fs/promises'
 import type { AppConfig, GeneratedNovel, PlayerProfile, StorySave, StoryTurn, StreamEvent } from '@shared/types'
 import { getConfig, setConfig, listSaves, loadSave, putSave, deleteSave } from '../../store/config'
 import { AIClient, AIError } from '../../ai/client'
-import { parseLooseJson } from '../../ai/parser'
+import { parseLooseJson, extractNarrativeSoFar } from '../../ai/parser'
 import { buildStoryMessages, normalizeTurn, STORY_TURN_SCHEMA } from '../../ai/promptBuilder'
 import { deriveDirective } from '../../engine/director'
 import { deriveProfile, INTRO_QUESTIONS } from '../../engine/profiler'
@@ -13,6 +13,8 @@ import { applyTurnToSave } from '../../engine/memory'
 
 /** 当前进行中的生成（用于取消） */
 let cancelled = false
+/** 当前生成请求的中断控制器：取消时真正断开 HTTP 流，省配额 */
+let abortController: AbortController | null = null
 
 /** 把流事件推送给当前窗口 */
 function emit(event: StreamEvent): void {
@@ -94,6 +96,8 @@ export function registerIpcHandlers(_ipc: typeof ipcMain): void {
   /* ---------- 生成下一轮剧情（流式） ---------- */
   ipcMain.handle('generate:next', async (_e, save: StorySave, chosenId: string | null) => {
     cancelled = false
+    abortController = new AbortController()
+    const signal = abortController.signal
     try {
       const client = new AIClient()
 
@@ -103,14 +107,19 @@ export function registerIpcHandlers(_ipc: typeof ipcMain): void {
       // 2. 组装 prompt
       const messages = buildStoryMessages(save, chosenId, directive)
 
-      // 3. 调用模型池（流式）
+      // 3. 调用模型池（流式）：边生成边提取 narrative 实时上屏
+      let acc = ''
       const rawText = await client.generate(messages, {
         stream: true,
         jsonSchema: STORY_TURN_SCHEMA,
         jsonObject: true,
         temperature: 0.85,
+        signal,
         onToken: (delta: string) => {
-          if (!cancelled) emit({ type: 'token', delta })
+          acc += delta
+          if (cancelled) return
+          const narrative = extractNarrativeSoFar(acc)
+          if (narrative) emit({ type: 'narrative', text: narrative })
         },
         onStatus: (message: string) => {
           if (!cancelled) emit({ type: 'status', message })
@@ -147,6 +156,7 @@ export function registerIpcHandlers(_ipc: typeof ipcMain): void {
             stream: true,
             jsonObject: true,
             temperature: 0.5,
+            signal,
             onToken: (delta: string) => {
               if (!cancelled) emit({ type: 'token', delta })
             }
@@ -186,6 +196,8 @@ export function registerIpcHandlers(_ipc: typeof ipcMain): void {
 
   ipcMain.handle('generate:cancel', () => {
     cancelled = true
+    abortController?.abort()
+    abortController = null
   })
 
   /* ---------- 完结生成小说 ---------- */

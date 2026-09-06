@@ -19,11 +19,17 @@ export const useStoryStore = defineStore('story', () => {
   const lastTurn = ref<StoryTurn | null>(null)
   /** 错误信息 */
   const error = ref('')
+  /** 流式实时正文（增量 JSON 解析提取，边生成边上屏） */
+  const streamingNarrative = ref('')
+  /** 上一轮是否为流式实时上屏（是则完成后无需打字机重放） */
+  const streamedLive = ref(false)
 
   /** 新建存档 */
   function setCurrent(save: StorySave): void {
     current.value = save
     error.value = ''
+    streamingNarrative.value = ''
+    streamedLive.value = false
     // 续作时：若存档有历史，恢复最后一轮显示（让玩家看到上次到哪了）
     const last = save.recentTurns[save.recentTurns.length - 1]
     if (last) {
@@ -53,20 +59,33 @@ export const useStoryStore = defineStore('story', () => {
     generating.value = true
     statusMessage.value = ''
     error.value = ''
+    streamingNarrative.value = ''
+    streamedLive.value = false
 
     // 解锁音频（用户交互上下文）
     unlockAudio()
+
+    // 流式音效节流：narrative 事件很密集，限制最快 45ms 一次
+    let lastClick = 0
 
     try {
       const result = await ipc.generateNext(current.value, chosenId, (event) => {
         if (event.type === 'status') {
           statusMessage.value = event.message
+        } else if (event.type === 'narrative') {
+          streamingNarrative.value = event.text
+          const now = Date.now()
+          if (now - lastClick > 45) {
+            lastClick = now
+            typewriterSound.click()
+          }
         }
       })
       if (result) {
         // 采纳主进程推进后的存档（含更新后的 recentTurns/summary/worldState）
         current.value = result.save
         lastTurn.value = result.turn
+        streamedLive.value = true
         return result.turn
       }
       return null
@@ -97,6 +116,8 @@ export const useStoryStore = defineStore('story', () => {
     generating,
     lastTurn,
     error,
+    streamingNarrative,
+    streamedLive,
     setCurrent,
     unlockAudio,
     generateNext,

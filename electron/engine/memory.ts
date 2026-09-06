@@ -54,6 +54,24 @@ export async function applyTurnToSave(
   if (sd.flags) Object.assign(save.worldState.flags, sd.flags)
   if (sd.npcs) Object.assign(save.worldState.npcs, sd.npcs)
 
+  // 4b. 玩家画像演进：累积 AI 观察到的行为倾向（旧存档无此字段则初始化）
+  if (!Array.isArray(save.playerProfile.evolvingNotes)) {
+    save.playerProfile.evolvingNotes = []
+  }
+  if (turn.profileDelta) {
+    for (const [k, v] of Object.entries(turn.profileDelta)) {
+      if (typeof v !== 'string' || !v.trim()) continue
+      const note = `${k}: ${v.trim()}`
+      if (!save.playerProfile.evolvingNotes.includes(note)) {
+        save.playerProfile.evolvingNotes.push(note)
+      }
+    }
+    // 只保留最近 12 条，避免无限膨胀
+    if (save.playerProfile.evolvingNotes.length > 12) {
+      save.playerProfile.evolvingNotes = save.playerProfile.evolvingNotes.slice(-12)
+    }
+  }
+
   // 5. 章节推进：AI 明确要求，或轮数达到蓝图预计（规则兜底，防死循环）
   save.worldState.chapterTurnCount += 1
   const chapter = save.storyOutline.chapters.find(
@@ -68,7 +86,20 @@ export async function applyTurnToSave(
   }
 
   // 6. 结局
-  if (turn.isEnding) save.finished = true
+  if (turn.isEnding) {
+    save.finished = true
+  } else {
+    // 硬性兜底：即使有收束指令，弱模型仍可能迟迟不给 is_ending。
+    // 最后一章超出预计轮数 2 轮后强制完结，防止玩家无限卡在终章。
+    const last = save.storyOutline.chapters[save.storyOutline.chapters.length - 1]
+    if (
+      last &&
+      save.worldState.currentChapter >= last.index &&
+      save.worldState.chapterTurnCount >= last.estTurns + 2
+    ) {
+      save.finished = true
+    }
+  }
 }
 
 /**

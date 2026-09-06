@@ -33,18 +33,38 @@ export interface NovelProgress {
   message: string
 }
 
-/** 把历程渲染成可读文本供 LLM 参考 */
-function renderHistory(history: RawTurn[]): string {
-  return history
-    .map((t, i) => {
-      const parts = [`【第${i + 1}段】${t.narrative}`]
-      if (t.chosenId && t.choices.length) {
-        const c = t.choices.find((x) => x.id === t.chosenId)
-        if (c) parts.push(`　（玩家选择：${c.text}）`)
-      }
-      return parts.join('\n')
-    })
-    .join('\n\n')
+/**
+ * 把历程渲染成可读文本供 LLM 参考。
+ * @param maxLenPerTurn 每段正文的最大长度（截断，控制总上下文）；0 = 不截断
+ * @param maxTurns 最多渲染的段数（超出的旧段以一行摘要代替）；0 = 不限制
+ *
+ * 防护目的：长局 rawHistory 无限增长，全量渲染会超出模型上下文窗口。
+ */
+function renderHistory(history: RawTurn[], maxLenPerTurn = 0, maxTurns = 0): string {
+  let list = history
+  let skipped = 0
+  if (maxTurns > 0 && history.length > maxTurns) {
+    skipped = history.length - maxTurns
+    list = history.slice(-maxTurns)
+  }
+  const lines: string[] = []
+  if (skipped > 0) {
+    lines.push(`【前 ${skipped} 段（梗概）】玩家已度过故事的前期阶段，详见各章正文。`)
+  }
+  list.forEach((t, idx) => {
+    const segNo = skipped + idx + 1
+    let text = t.narrative
+    if (maxLenPerTurn > 0 && text.length > maxLenPerTurn) {
+      text = text.slice(0, maxLenPerTurn) + '……'
+    }
+    const parts = [`【第${segNo}段】${text}`]
+    if (t.chosenId && t.choices.length) {
+      const c = t.choices.find((x) => x.id === t.chosenId)
+      if (c) parts.push(`　（玩家选择：${c.text}）`)
+    }
+    lines.push(parts.join('\n'))
+  })
+  return lines.join('\n\n')
 }
 
 /** 规划小说蓝图（标题 + 章节划分） */
@@ -71,7 +91,8 @@ function buildPlanMessages(
     `偏好：${profile.summary}`,
     '',
     '【玩家历程（段落 + 选择）】',
-    renderHistory(history),
+    // 规划只需梗概：每段截断 150 字、最多渲染最近 80 段（防长局超上下文）
+    renderHistory(history, 150, 80),
     '',
     '【任务】',
     '请规划这部小说的结构，返回 JSON：',
@@ -138,7 +159,8 @@ function buildChapterMessages(
     `读者画像：${profile.summary}`,
     '',
     '【本章对应的原始历程（段落 + 玩家选择）】',
-    renderHistory(segs),
+    // 章节写作需要较完整上下文，但每段仍截断防爆炸（400 字足以衔接）
+    renderHistory(segs, 400),
     prevTail ? `\n【上一章结尾，保持衔接】\n${prevTail}` : '',
     '',
     '【写作要求】',

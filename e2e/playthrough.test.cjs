@@ -3,7 +3,7 @@
  * 加载编译后的真实主进程 bundle，直接调用 IPC handler，
  * 模拟玩家完整游玩：开场 → 多轮剧情 → 章节推进。
  */
-const mod = require('./_e2e.cjs')
+const mod = require('../_e2e.cjs')
 mod.registerIpcHandlers({})
 const h = globalThis.__handlers
 const events = globalThis.__events

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useStoryStore } from '../stores/story'
 import { useConfigStore } from '../stores/config'
 import TypewriterText from '../components/TypewriterText.vue'
@@ -10,14 +10,18 @@ const emit = defineEmits<{ novel: [] }>()
 
 const scrollRef = ref<HTMLElement | null>(null)
 const chosenId = ref<string | null>(null)
-const pendingChoice = ref<string | null>(null)
+/** 前情回顾抽屉 */
+const showHistory = ref(false)
 
-/** 当前应显示的正文：生成中不显示（JSON 流式无法边收边提取正文），
- *  完成后显示解析出的纯正文，由打字机逐字呈现 */
+/** 当前应显示的正文：生成中显示流式实时提取的正文（边生成边上屏），
+ *  完成后显示解析出的纯正文 */
 const narrative = computed(() => {
-  if (story.generating) return ''
+  if (story.generating) return story.streamingNarrative
   return story.lastTurn?.narrative ?? ''
 })
+
+/** 完成后是否直接整段显示（流式已实时看过，无需打字机重放） */
+const instantAfterDone = computed(() => story.streamedLive)
 
 const choices = computed(() => story.lastTurn?.choices ?? [])
 
@@ -55,6 +59,9 @@ onMounted(() => {
   }
 })
 
+// 流式正文增长时自动滚动到底部
+watch(() => story.streamingNarrative, scrollDown)
+
 const isFinished = computed(() => story.current?.finished)
 const noSave = computed(() => !story.current)
 </script>
@@ -66,9 +73,46 @@ const noSave = computed(() => !story.current)
   </section>
 
   <section v-else ref="scrollRef" class="story reading-col">
-    <div class="chapter-marker">{{ chapterTitle }}</div>
+    <div class="chapter-marker-row">
+      <span class="chapter-marker">{{ chapterTitle }}</span>
+      <button
+        v-if="story.current && story.current.rawHistory.length > 1"
+        class="history-btn"
+        @click="showHistory = true"
+      >前情</button>
+    </div>
 
-    <!-- 生成中：显示进度条（不显示正文，因为流式返回的是 JSON 无法边收边显示） -->
+    <!-- 前情回顾抽屉 -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div v-if="showHistory" class="history-overlay" @click.self="showHistory = false">
+          <div class="history-panel">
+            <div class="history-head">
+              <span>前情回顾</span>
+              <button class="history-close" @click="showHistory = false">✕</button>
+            </div>
+            <div class="history-body">
+              <div
+                v-for="(t, i) in story.current?.rawHistory ?? []"
+                :key="i"
+                class="history-item"
+              >
+                <div class="history-seg">第 {{ i + 1 }} 段</div>
+                <p class="history-text">{{ t.narrative }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- 生成中：流式正文边生成边上屏；尚未有正文时显示进度条 -->
+    <div v-if="story.generating && story.streamingNarrative" class="narrative-wrap">
+      <p class="narrative streaming">
+        {{ story.streamingNarrative }}<span class="stream-cursor">▏</span>
+      </p>
+    </div>
+
     <div v-if="story.generating" class="inline-loading">
       <div class="inline-bar">
         <div class="inline-bar-fill" :class="{ indeterminate: true }" />
@@ -76,13 +120,13 @@ const noSave = computed(() => !story.current)
       <p class="inline-status">{{ story.statusMessage || '正在构思下一段…' }}</p>
     </div>
 
-    <!-- 完成后：显示纯正文（打字机逐字呈现） -->
+    <!-- 完成后：显示纯正文（流式已实时看过的直接显示；读档续作的打字机重放） -->
     <article v-else-if="narrative" class="narrative-wrap">
       <p class="narrative">
         <TypewriterText
           :text="narrative"
           :speed="config.config.typewriterSpeed"
-          :instant="false"
+          :instant="instantAfterDone"
           @done="scrollDown"
         />
       </p>
@@ -131,14 +175,87 @@ const noSave = computed(() => !story.current)
   padding: 48px 32px 120px;
   overflow-y: auto;
 }
-.chapter-marker {
-  text-align: center;
-  font-size: 13px;
-  color: var(--fg-muted);
-  letter-spacing: 0.15em;
+.chapter-marker-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
   margin-bottom: 40px;
   padding-bottom: 20px;
   border-bottom: 1px solid var(--border);
+}
+.chapter-marker {
+  font-size: 13px;
+  color: var(--fg-muted);
+  letter-spacing: 0.15em;
+}
+.history-btn {
+  position: absolute;
+  right: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  letter-spacing: 0.1em;
+  transition: all 0.2s var(--ease);
+}
+.history-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+}
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 100;
+}
+.history-panel {
+  width: min(520px, 92vw);
+  height: 100%;
+  background: var(--bg-soft);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+.history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  color: var(--fg);
+}
+.history-close {
+  font-size: 14px;
+  color: var(--fg-muted);
+  padding: 4px 8px;
+}
+.history-close:hover {
+  color: var(--fg);
+}
+.history-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 40px;
+}
+.history-item {
+  margin-bottom: 24px;
+}
+.history-seg {
+  font-size: 11px;
+  color: var(--accent-soft);
+  letter-spacing: 0.15em;
+  margin-bottom: 6px;
+}
+.history-text {
+  font-size: 14px;
+  line-height: 1.9;
+  color: var(--fg-soft);
 }
 .narrative-wrap {
   margin-bottom: 36px;
@@ -149,6 +266,21 @@ const noSave = computed(() => !story.current)
   letter-spacing: 0.03em;
   color: var(--fg);
   text-indent: 2em;
+}
+.narrative.streaming {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.stream-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--accent);
+  animation: stream-blink 0.9s steps(2) infinite;
+}
+@keyframes stream-blink {
+  50% {
+    opacity: 0;
+  }
 }
 .status {
   text-align: center;

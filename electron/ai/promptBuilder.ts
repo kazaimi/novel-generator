@@ -60,7 +60,23 @@ function profileToText(p: PlayerProfile): string {
   parts.push(p.heart >= 0 ? '重情感与羁绊' : '重理性与逻辑')
   parts.push(`题材偏好：${p.genrePreference}`)
   if (p.summary) parts.push(`综合画像：${p.summary}`)
+  // 游玩过程中累积的行为倾向（AI 每轮观察所得），让叙事逐步贴合玩家
+  if (p.evolvingNotes?.length) {
+    parts.push(`近期行为倾向（据此微调剧情走向与选项设计）：${p.evolvingNotes.slice(-6).join('；')}`)
+  }
   return parts.join('；')
+}
+
+/**
+ * 结局兜底：处于最后一章且轮数已达预计时，强制要求 AI 开始收束结局。
+ * 否则弱模型可能无限停在最后一章，玩家永远到不了"完结"。
+ */
+function shouldForceEnding(save: StorySave): string {
+  const { storyOutline, worldState } = save
+  const last = storyOutline.chapters[storyOutline.chapters.length - 1]
+  if (!last || worldState.currentChapter < last.index) return ''
+  if (worldState.chapterTurnCount < last.estTurns) return ''
+  return '【收束指令】故事已到尾声阶段：本段必须将剧情引向最终结局——收束主要伏笔、给出结局走向，并在 JSON 中将 is_ending 设为 true。不要再开启新的事件线。'
 }
 
 /** 组装生成下一轮的系统提示 */
@@ -83,6 +99,7 @@ export function buildStoryMessages(
     `节奏提示：${directive.pacingNote}`,
     `正文长度：${directive.lengthGuide}。这是硬性要求：narrative 不得少于 150 字，要写足场景、动作、心理与环境细节，不允许一笔带过。`,
     `类型守卫：${directive.genreGuard}`,
+    shouldForceEnding(save),
     '',
     '【一致性约束 —— 不得违背或遗忘】',
     directive.continuityKeys.length

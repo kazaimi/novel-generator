@@ -49,7 +49,8 @@ export function deriveProfile(answers: Record<string, number>): PlayerProfile {
     pace: clamp(pace),
     heart: clamp(heart),
     genrePreference,
-    summary: summarize(risk, tone, pace, heart, genrePreference)
+    summary: summarize(risk, tone, pace, heart, genrePreference),
+    evolvingNotes: []
   }
   return profile
 }

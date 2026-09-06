@@ -63,6 +63,8 @@ export interface GenerateOptions {
   onStatus?: (message: string) => void
   /** 取消信号 */
   shouldCancel?: () => boolean
+  /** 中断信号：abort 时真正断开 HTTP 流（省配额） */
+  signal?: AbortSignal
 }
 
 /**
@@ -148,7 +150,8 @@ export class AIClient {
       temperature = 0.85,
       onToken,
       onStatus,
-      shouldCancel
+      shouldCancel,
+      signal
     } = options
 
     let lastError: AIError | null = null
@@ -192,8 +195,10 @@ export class AIClient {
           }
 
           // 使用 unknown 中转，规避 OpenAI SDK 联合类型的类型冲突
+          // 第二参数传 signal：abort 时真正断开 HTTP 流
           const completion = await this.client.chat.completions.create(
-            params as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming
+            params as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+            signal ? { signal } : undefined
           )
 
           let full = ''
